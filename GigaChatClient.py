@@ -2,17 +2,12 @@ import re
 import json
 from typing import List, Dict, Any
 
-
-# Для веб-интерфейса
-import streamlit as st
-
 # Для GigaChat API
 from gigachat import GigaChat
 import ssl
 import certifi
 
 from Config import Config
-from DocumentParser import DocumentParser
 
 
 class GigaChatClient:
@@ -159,11 +154,6 @@ class GigaChatClient:
             content = re.sub(r'```json\n?', '', content)
             content = re.sub(r'\n?```', '', content)
             content = content.strip()
-
-            # Пробуем найти JSON в тексте
-            json_match = re.search(r'\{.*\}', content, re.DOTALL)
-            if json_match:
-                content = json_match.group()
 
             return json.loads(content)
 
