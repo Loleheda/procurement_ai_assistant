@@ -4,7 +4,7 @@ import uuid
 
 import pandas as pd
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 # Для веб-интерфейса
 import streamlit as st
@@ -16,6 +16,7 @@ from Config import Config
 from DocumentParser import DocumentParser
 from EmailProcessor import EmailProcessor
 from GigaChatClient import GigaChatClient
+from RedisCache import RedisCache
 from VectorSearch import VectorSearch
 from BenchmarkLogger import BenchmarkLogger
 
@@ -30,12 +31,13 @@ def init_session_state():
         st.session_state.current_page = "Главная"
     if 'comparison_result' not in st.session_state:
         st.session_state.comparison_result = None
-    # Добавляем логгер
     if 'benchmark_logger' not in st.session_state:
         st.session_state.benchmark_logger = BenchmarkLogger(
             log_to_file=Config.ENABLE_BENCHMARK,
             log_file=Config.BENCHMARK_LOG_FILE
         )
+    if 'redis_cache' not in st.session_state:
+        st.session_state.redis_cache = RedisCache()
 
 
 def load_offers() -> List[Dict]:
@@ -207,6 +209,7 @@ def main():
                         credentials=gigachat_key,
                         scope=scope,
                         verify_ssl=Config.VERIFY_SSL_CERTS,
+                        cache=st.session_state.redis_cache,
                         logger=st.session_state.benchmark_logger
                     )
                     st.success("✅ Подключено к GigaChat!")
@@ -258,6 +261,17 @@ def main():
         # Статистика
         st.header("📊 Статистика")
         st.metric("Всего предложений", len(st.session_state.offers))
+
+        # Статус кэша
+        st.header("🗄️ Кэш Redis")
+        if st.button("🧹 Очистить кэш", use_container_width=True):
+            st.session_state.redis_cache.clear()
+
+        # Статус кэша
+        if st.session_state.redis_cache.is_connected():
+            st.success("✅ Кэш Redis активен")
+        else:
+            st.warning("⚠️ Кэш Redis отключён")
 
         if st.session_state.offers:
             total_sum = sum(o.get('total_amount', 0) or 0 for o in st.session_state.offers)

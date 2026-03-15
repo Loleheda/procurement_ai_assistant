@@ -13,7 +13,7 @@ class Config:
     # Настройки почты (замените на свои)
     EMAIL_HOST = "imap.yandex.ru"
     EMAIL_PORT = 993
-    EMAIL_USER = ""
+    EMAIL_USER = os.getenv("EMAIL_USER", "")
     EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
 
     # Пути к файлам
@@ -28,5 +28,13 @@ class Config:
     GPU_DEVICE = 0
 
     # Настройки логирования
-    ENABLE_BENCHMARK = True   # Включить сбор бенчмарков
-    BENCHMARK_LOG_FILE = "benchmarks\\benchmark.log"  # Файл для логов
+    ENABLE_BENCHMARK = True
+    BENCHMARK_LOG_FILE = "logs\\benchmark.log"
+
+    # Настройки Redis (для него отдельное логирование, так как его лог необходим всегда при работе программы)
+    REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+    REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+    REDIS_DB = int(os.getenv("REDIS_DB", 0))
+    REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
+    REDIS_TTL = 3600  # Время жизни кэша в секундах (1 час)
+    REDIS_LOG_FILE="logs\\redis_log.txt"

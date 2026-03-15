@@ -12,6 +12,7 @@ import streamlit as st
 
 from BenchmarkLogger import BenchmarkLogger
 from Config import Config
+from RedisCache import RedisCache
 
 
 class GigaChatClient:
@@ -19,6 +20,7 @@ class GigaChatClient:
 
     def __init__(self, credentials: str, scope: str = "GIGACHAT_API_PERS",
                  model: str = "GigaChat", verify_ssl: bool = False,
+                 cache: Optional[RedisCache] = None,
                  logger: Optional[BenchmarkLogger] = None):
         """
         Инициализация клиента GigaChat
@@ -34,6 +36,7 @@ class GigaChatClient:
         self.model = model
         self.verify_ssl = verify_ssl
         self.client = None
+        self.cache = cache
         self.logger = logger
         self._init_client()
 
@@ -50,12 +53,19 @@ class GigaChatClient:
                 scope=self.scope,
                 model=self.model,
                 verify_ssl_certs=self.verify_ssl,
-                timeout=Config.GIGACHAT_TIMEOUT,
-                logger=self.logger
+                timeout=Config.GIGACHAT_TIMEOUT
             )
         except Exception as e:
             st.error(f"❌ Ошибка инициализации GigaChat: {e}")
             raise
+
+    def _get_cache_key_data(self, messages: List[Dict], temperature: float) -> dict:
+        """Формирует структуру для ключа кэша."""
+        return {
+            'model': self.model,
+            'messages': messages,
+            'temperature': temperature
+        }
 
     def chat(self, messages: List[Dict], temperature: float = 0.1) -> Dict:
         """
@@ -68,6 +78,21 @@ class GigaChatClient:
         Returns:
             Ответ от модели
         """
+        # Проверяем кэш
+        if self.cache and self.cache.is_connected():
+            key_data = self._get_cache_key_data(messages, temperature)
+            if self.logger:
+                with self.logger.measure("Кэш GigaChat (чтение)"):
+                    cached = self.cache.get(key_data)
+            else:
+                cached = self.cache.get(key_data)
+
+            if cached:
+                try:
+                    return json.loads(cached.decode('utf-8'))
+                except:
+                    pass
+
         try:
             # Формируем запрос
             chat_payload = {
@@ -78,7 +103,11 @@ class GigaChatClient:
             }
 
             # Отправляем запрос
-            response = self.client.chat(chat_payload)
+            if self.logger:
+                with self.logger.measure(f"GigaChat запрос ({self.model})"):
+                    response = self.client.chat(chat_payload)
+            else:
+                response = self.client.chat(chat_payload)
 
             # Преобразуем в удобный формат
             result = {
@@ -92,6 +121,13 @@ class GigaChatClient:
                     }
                 ]
             }
+
+            # Сохраняем в кэш
+            if self.cache and self.cache.is_connected():
+                if self.logger:
+                    with self.logger.measure("Кэш GigaChat (запись)"):
+                        key_data = self._get_cache_key_data(messages, temperature)
+                        self.cache.set(key_data, result)
 
             return result
 
