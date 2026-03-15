@@ -9,6 +9,9 @@ from typing import List, Dict
 # Для веб-интерфейса
 import streamlit as st
 
+import torch
+from AcceleratedVectorSearch import AcceleratedVectorSearch
+
 from Config import Config
 from DocumentParser import DocumentParser
 from EmailProcessor import EmailProcessor
@@ -91,7 +94,15 @@ def create_search_index():
         metadata.append(offer)
 
     # Создаем индекс
-    searcher = VectorSearch()
+    if Config.USE_GPU and torch.cuda.is_available():
+        searcher = AcceleratedVectorSearch()
+        st.info("🚀 Используется GPU для ускорения эмбеддингов")
+    else:
+        searcher = VectorSearch()
+        if Config.USE_GPU:
+            st.warning("GPU не обнаружен, работаем на CPU")
+        else:
+            st.info("Используется CPU (GPU отключён в настройках)")
     with st.spinner("Создание поискового индекса..."):
         searcher.create_index(documents, metadata)
         searcher.save(Config.VECTOR_DB_PATH)
@@ -743,7 +754,10 @@ def show_search_tab():
     index_path = Config.VECTOR_DB_PATH + ".faiss"
 
     if os.path.exists(meta_path) and os.path.exists(index_path):
-        searcher = VectorSearch()
+        if Config.USE_GPU and torch.cuda.is_available():
+            searcher = AcceleratedVectorSearch()
+        else:
+            searcher = VectorSearch()
         searcher.load(Config.VECTOR_DB_PATH)
 
         query = st.text_input("Поисковый запрос", placeholder="Например: ноутбуки с доставкой по Москве")

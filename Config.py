@@ -22,3 +22,7 @@ class Config:
     OFFERS_DB_PATH = "offers\\offers_db_gigachat.json"
 
     VERIFY_SSL_CERTS = False
+
+    # Настройки GPU
+    USE_GPU = True
+    GPU_DEVICE = 0
