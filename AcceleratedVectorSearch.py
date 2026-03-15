@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import os
 import pickle
-from typing import Any
+from typing import Any, Optional
 
 import streamlit as st
 import torch
 import faiss
 from sentence_transformers import SentenceTransformer
 
+from BenchmarkLogger import BenchmarkLogger
 from Config import Config
 
 
 class AcceleratedVectorSearch:
-    def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
+    def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2",
+                 logger: Optional[BenchmarkLogger] = None):
         self.model_name = model_name
         self.use_gpu = Config.USE_GPU and torch.cuda.is_available()
         self.model: SentenceTransformer | None = None
@@ -21,11 +23,16 @@ class AcceleratedVectorSearch:
         self.documents: list[str] = []
         self.metadata: list[dict[str, Any]] = []
         self.embeddings_cache: dict[str, Any] = {}
+        self.logger = logger
 
     def _load_model(self):
         if self.model is None:
             with st.spinner("Загрузка модели эмбеддингов..."):
-                self.model = SentenceTransformer(self.model_name)
+                if self.logger:
+                    with self.logger.measure("Загрузка модели эмбеддингов"):
+                        self.model = SentenceTransformer(self.model_name)
+                else:
+                    self.model = SentenceTransformer(self.model_name)
                 if self.use_gpu:
                     self.model = self.model.to('cuda')
                     st.info("✅ Модель эмбеддингов загружена на GPU")
@@ -40,7 +47,11 @@ class AcceleratedVectorSearch:
         if not documents:
             return
 
-        embeddings = self.model.encode(documents, show_progress_bar=True)
+        if self.logger:
+            with self.logger.measure("Генерация эмбеддингов"):
+                embeddings = self.model.encode(documents, show_progress_bar=True)
+        else:
+            embeddings = self.model.encode(documents, show_progress_bar=True)
         faiss.normalize_L2(embeddings)
         dimension = embeddings.shape[1]
         self.index = faiss.IndexFlatIP(dimension)

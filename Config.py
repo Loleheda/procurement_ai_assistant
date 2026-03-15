@@ -26,3 +26,7 @@ class Config:
     # Настройки GPU
     USE_GPU = True
     GPU_DEVICE = 0
+
+    # Настройки логирования
+    ENABLE_BENCHMARK = True   # Включить сбор бенчмарков
+    BENCHMARK_LOG_FILE = "benchmarks\\benchmark.log"  # Файл для логов

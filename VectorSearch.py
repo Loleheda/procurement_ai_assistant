@@ -1,5 +1,5 @@
 import os
-from typing import List, Dict
+from typing import List, Dict, Optional
 import pickle
 
 # Для веб-интерфейса
@@ -9,11 +9,14 @@ import streamlit as st
 from sentence_transformers import SentenceTransformer
 import faiss
 
+from BenchmarkLogger import BenchmarkLogger
+
 
 class VectorSearch:
     """Класс для семантического поиска по предложениям"""
 
-    def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
+    def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2",
+                 logger: Optional[BenchmarkLogger] = None):
         """
         Инициализация поиска
 
@@ -25,11 +28,15 @@ class VectorSearch:
         self.index = None
         self.documents = []
         self.metadata = []
+        self.logger = logger
 
     def _load_model(self):
         """Ленивая загрузка модели"""
         if self.model is None:
-            with st.spinner("Загрузка модели эмбеддингов..."):
+            if self.logger:
+                with self.logger.measure("Загрузка модели эмбеддингов"):
+                    self.model = SentenceTransformer(self.model_name)
+            else:
                 self.model = SentenceTransformer(self.model_name)
 
     def create_index(self, documents: List[str], metadata: List[Dict]):
@@ -43,7 +50,11 @@ class VectorSearch:
             return
 
         # Создаем эмбеддинги
-        embeddings = self.model.encode(documents, show_progress_bar=True)
+        if self.logger:
+            with self.logger.measure("Генерация эмбеддингов"):
+                embeddings = self.model.encode(documents, show_progress_bar=True)
+        else:
+            embeddings = self.model.encode(documents, show_progress_bar=True)
 
         # Создаем FAISS индекс
         dimension = embeddings.shape[1]

@@ -17,6 +17,7 @@ from DocumentParser import DocumentParser
 from EmailProcessor import EmailProcessor
 from GigaChatClient import GigaChatClient
 from VectorSearch import VectorSearch
+from BenchmarkLogger import BenchmarkLogger
 
 
 def init_session_state():
@@ -29,6 +30,12 @@ def init_session_state():
         st.session_state.current_page = "Главная"
     if 'comparison_result' not in st.session_state:
         st.session_state.comparison_result = None
+    # Добавляем логгер
+    if 'benchmark_logger' not in st.session_state:
+        st.session_state.benchmark_logger = BenchmarkLogger(
+            log_to_file=Config.ENABLE_BENCHMARK,
+            log_file=Config.BENCHMARK_LOG_FILE
+        )
 
 
 def load_offers() -> List[Dict]:
@@ -59,6 +66,7 @@ def save_offers(offers: List[Dict]):
 def create_search_index():
     """Создание поискового индекса"""
     offers = st.session_state.offers
+    logger = st.session_state.benchmark_logger
 
     if not offers:
         st.warning("Нет предложений для индексации")
@@ -94,18 +102,19 @@ def create_search_index():
         metadata.append(offer)
 
     # Создаем индекс
-    if Config.USE_GPU and torch.cuda.is_available():
-        searcher = AcceleratedVectorSearch()
-        st.info("🚀 Используется GPU для ускорения эмбеддингов")
-    else:
-        searcher = VectorSearch()
-        if Config.USE_GPU:
-            st.warning("GPU не обнаружен, работаем на CPU")
+    with logger.measure("Создание векторного индекса"):
+        if Config.USE_GPU and torch.cuda.is_available():
+            searcher = AcceleratedVectorSearch()
+            st.info("🚀 Используется GPU для ускорения эмбеддингов")
         else:
-            st.info("Используется CPU (GPU отключён в настройках)")
-    with st.spinner("Создание поискового индекса..."):
-        searcher.create_index(documents, metadata)
-        searcher.save(Config.VECTOR_DB_PATH)
+            searcher = VectorSearch()
+            if Config.USE_GPU:
+                st.warning("GPU не обнаружен, работаем на CPU")
+            else:
+                st.info("Используется CPU (GPU отключён в настройках)")
+        with st.spinner("Создание поискового индекса..."):
+            searcher.create_index(documents, metadata)
+            searcher.save(Config.VECTOR_DB_PATH)
 
     st.success(f"✅ Индекс создан для {len(documents)} документов")
 
@@ -141,6 +150,13 @@ def show_email_instructions():
         > ⚠️ **Важно**: Используйте именно пароль приложения, а не пароль от почты!
         """)
 
+def show_benchmark_tab():
+    """Отображение бенчмарков"""
+    logger = st.session_state.benchmark_logger
+    logger.display()
+
+    if st.button("Обновить статистику"):
+        st.rerun()
 
 def main():
     """Главная функция приложения"""
@@ -190,7 +206,8 @@ def main():
                     st.session_state.gigachat_client = GigaChatClient(
                         credentials=gigachat_key,
                         scope=scope,
-                        verify_ssl=Config.VERIFY_SSL_CERTS
+                        verify_ssl=Config.VERIFY_SSL_CERTS,
+                        logger=st.session_state.benchmark_logger
                     )
                     st.success("✅ Подключено к GigaChat!")
                 except Exception as e:
@@ -266,11 +283,12 @@ def main():
         return
 
     # Вкладки
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📋 Все предложения",
         "🤝 Сравнение",
         "✍️ Генерация ответов",
-        "🔍 Поиск"
+        "🔍 Поиск",
+        "📊 Производительность"
     ])
 
     with tab1:
@@ -285,11 +303,15 @@ def main():
     with tab4:
         show_search_tab()
 
+    with tab5:
+        show_benchmark_tab()
+
 
 def process_uploaded_files(files):
-    """Обработка загруженных файлов"""
+    """Обработка загруженных файлов с бенчмарками"""
     parser = DocumentParser()
     client = st.session_state.gigachat_client
+    logger = st.session_state.benchmark_logger
 
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -298,25 +320,25 @@ def process_uploaded_files(files):
 
     for i, file in enumerate(files):
         status_text.text(f"Обработка {file.name}...")
+        with logger.measure(f"Обработка файла {file.name}"):
+            # Сохраняем временный файл
+            temp_path = f"temp_{file.name}"
+            with open(temp_path, 'wb') as f:
+                f.write(file.getvalue())
 
-        # Сохраняем временный файл
-        temp_path = f"temp_{file.name}"
-        with open(temp_path, 'wb') as f:
-            f.write(file.getvalue())
+            # Парсим документ
+            text = parser.parse_document(temp_path)
 
-        # Парсим документ
-        text = parser.parse_document(temp_path)
+            if text and len(text.strip()) > 50:
+                # Извлекаем данные через GigaChat
+                offer_data = client.extract_offer_data(text)
+                offer_data['filename'] = file.name
+                offer_data['date'] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                offer_data['source'] = 'upload'
+                processed_offers.append(offer_data)
 
-        if text and len(text.strip()) > 50:
-            # Извлекаем данные через GigaChat
-            offer_data = client.extract_offer_data(text)
-            offer_data['filename'] = file.name
-            offer_data['date'] = datetime.now().strftime("%Y-%m-%d %H:%M")
-            offer_data['source'] = 'upload'
-            processed_offers.append(offer_data)
-
-        # Удаляем временный файл
-        os.remove(temp_path)
+            # Удаляем временный файл
+            os.remove(temp_path)
 
         # Обновляем прогресс
         progress_bar.progress((i + 1) / len(files))
@@ -349,7 +371,7 @@ def process_uploaded_files(files):
 
 def check_email():
     """Проверка почты с обработкой вложений"""
-
+    logger = st.session_state.benchmark_logger
     # Получаем настройки из Config или из пользовательского ввода
     with st.expander("📧 Настройки почты", expanded=True):
         col1, col2 = st.columns(2)
@@ -410,65 +432,66 @@ def check_email():
             )
 
             # Получаем письма
-            emails = processor.get_unread_emails(5)
+            with logger.measure("Получение писем с вложениями"):
+                emails = processor.get_unread_emails(5)
 
-            if not emails:
-                st.info("📭 Новых писем с вложениями не найдено")
-                return
+                if not emails:
+                    st.info("📭 Новых писем с вложениями не найдено")
+                    return
 
-            st.success(f"✅ Найдено писем: {len(emails)}")
+                st.success(f"✅ Найдено писем: {len(emails)}")
 
-            # Обрабатываем каждое письмо
-            parser = DocumentParser()
-            client = st.session_state.gigachat_client
+                # Обрабатываем каждое письмо
+                parser = DocumentParser()
+                client = st.session_state.gigachat_client
 
-            for email_data in emails:
-                with st.expander(f"📧 {email_data['subject']}"):
-                    st.write(f"**От:** {email_data['from']}")
-                    st.write(f"**Дата:** {email_data['date']}")
+                for email_data in emails:
+                    with st.expander(f"📧 {email_data['subject']}"):
+                        st.write(f"**От:** {email_data['from']}")
+                        st.write(f"**Дата:** {email_data['date']}")
 
-                    if email_data['body']:
-                        st.write("**Текст письма:**")
-                        st.text(email_data['body'][:200] + "..." if len(email_data['body']) > 200 else email_data['body'])
+                        if email_data['body']:
+                            st.write("**Текст письма:**")
+                            st.text(email_data['body'][:200] + "..." if len(email_data['body']) > 200 else email_data['body'])
 
-                    if email_data['attachments']:
-                        st.write("**Вложения:**")
+                        if email_data['attachments']:
+                            st.write("**Вложения:**")
 
-                        for attachment in email_data['attachments']:
-                            col1, col2 = st.columns([3, 1])
+                            for attachment in email_data['attachments']:
+                                col1, col2 = st.columns([3, 1])
 
-                            with col1:
-                                st.write(f"📎 {attachment['filename']}")
+                                with col1:
+                                    st.write(f"📎 {attachment['filename']}")
 
-                            with col2:
-                                if st.button(f"Обработать", key=f"process_{attachment['filename']}"):
-                                    with st.spinner(f"Обработка {attachment['filename']}..."):
-                                        # Сохраняем временный файл
-                                        temp_path = f"temp_{uuid.uuid4()}_{attachment['filename']}"
-                                        with open(temp_path, 'wb') as f:
-                                            f.write(attachment['data'])
+                                with col2:
+                                    if st.button(f"Обработать", key=f"process_{attachment['filename']}"):
+                                        with st.spinner(f"Обработка {attachment['filename']}..."):
+                                            # Сохраняем временный файл
+                                            temp_path = f"temp_{uuid.uuid4()}_{attachment['filename']}"
+                                            with open(temp_path, 'wb') as f:
+                                                f.write(attachment['data'])
 
-                                        # Парсим документ
-                                        text = parser.parse_document(temp_path)
+                                            # Парсим документ
+                                            text = parser.parse_document(temp_path)
 
-                                        if text and len(text.strip()) > 50:
-                                            # Анализируем через GigaChat
-                                            offer_data = client.extract_offer_data(text)
-                                            offer_data['filename'] = attachment['filename']
-                                            offer_data['source'] = 'email'
-                                            offer_data['from'] = email_data['from']
-                                            offer_data['date'] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                                            if text and len(text.strip()) > 50:
+                                                # Анализируем через GigaChat
+                                                offer_data = client.extract_offer_data(text)
+                                                offer_data['filename'] = attachment['filename']
+                                                offer_data['source'] = 'email'
+                                                offer_data['from'] = email_data['from']
+                                                offer_data['date'] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-                                            st.json(offer_data)
+                                                st.json(offer_data)
 
-                                            # Сохраняем в базу
-                                            save_offers([offer_data])
-                                            st.success(f"✅ Предложение сохранено")
+                                                # Сохраняем в базу
+                                                save_offers([offer_data])
+                                                st.success(f"✅ Предложение сохранено")
 
-                                        # Удаляем временный файл
-                                        os.remove(temp_path)
-                    else:
-                        st.info("Нет вложений для обработки")
+                                            # Удаляем временный файл
+                                            os.remove(temp_path)
+                        else:
+                            st.info("Нет вложений для обработки")
 
 def show_offers_tab():
     """Отображение всех предложений"""
@@ -566,6 +589,7 @@ def show_offers_tab():
 def show_comparison_tab():
     """Сравнение предложений"""
     offers = st.session_state.offers
+    logger = st.session_state.benchmark_logger
 
     if len(offers) < 2:
         st.info("📭 Для сравнения нужно минимум 2 предложения")
@@ -586,66 +610,93 @@ def show_comparison_tab():
         return
 
     if st.button("🚀 Сравнить", type="primary"):
-        with st.spinner("Анализ предложений..."):
-            selected_offers = [offers[i] for i in selected_indices]
+        with logger.measure("Сравнение предложений"):
+            with st.spinner("Анализ предложений..."):
+                selected_offers = [offers[i] for i in selected_indices]
 
-            comparison = st.session_state.gigachat_client.compare_offers(selected_offers)
-            st.session_state.comparison_result = comparison
+                comparison = st.session_state.gigachat_client.compare_offers(selected_offers)
+                st.session_state.comparison_result = comparison
 
-            if "error" in comparison:
-                st.error(comparison["error"])
-                return
+                if "error" in comparison:
+                    st.error(comparison["error"])
+                    return
 
-            # Результаты
-            col1, col2 = st.columns(2)
+                # Результаты
+                col1, col2 = st.columns(2)
 
-            with col1:
-                st.subheader("🏆 Лучшее предложение")
-                if 'best_offer' in comparison:
-                    best_idx = comparison['best_offer']
-                    if isinstance(best_idx, int) and best_idx < len(selected_offers):
-                        best = selected_offers[best_idx]
-                        st.success(f"**{best.get('supplier_name', 'Неизвестно')}**")
-                        st.write(f"Сумма: {best.get('total_amount', 0):,} ₽")
+                with col1:
+                    st.subheader("🏆 Лучшее предложение")
+                    if 'best_offer' in comparison:
+                        best_idx = comparison['best_offer']
+                        if isinstance(best_idx, int) and best_idx < len(selected_offers):
+                            best = selected_offers[best_idx]
+                            st.success(f"**{best.get('supplier_name', 'Неизвестно')}**")
+                            st.write(f"Сумма: {best.get('total_amount', 0):,} ₽")
 
-                        if 'best_offer_reason' in comparison:
-                            st.info(comparison['best_offer_reason'])
+                            if 'best_offer_reason' in comparison:
+                                st.info(comparison['best_offer_reason'])
 
-            with col2:
-                st.subheader("💰 Возможная экономия")
-                if 'estimated_savings' in comparison:
-                    st.metric("Экономия", comparison['estimated_savings'])
+                with col2:
+                    st.subheader("💰 Возможная экономия")
+                    if 'estimated_savings' in comparison:
+                        savings = comparison['estimated_savings']
+                        # Преобразуем savings в читаемый вид
+                        if isinstance(savings, (int, float)):
+                            st.metric("Экономия", f"{savings:,.0f} ₽")
+                        elif isinstance(savings, dict):
+                            # Пытаемся найти число в словаре
+                            if 'value' in savings and isinstance(savings['value'], (int, float)):
+                                st.metric("Экономия", f"{savings['value']:,.0f} ₽")
+                            elif 'amount' in savings and isinstance(savings['amount'], (int, float)):
+                                st.metric("Экономия", f"{savings['amount']:,.0f} ₽")
+                            else:
+                                st.write(f"Экономия: {savings}")
+                        elif isinstance(savings, str):
+                            # Извлекаем число из строки
+                            import re
+                            numbers = re.findall(r"[\d\s]+", savings.replace(' ', ''))
+                            if numbers:
+                                num_str = numbers[0].replace(' ', '')
+                                try:
+                                    num = float(num_str)
+                                    st.metric("Экономия", f"{num:,.0f} ₽")
+                                except:
+                                    st.write(f"Экономия: {savings}")
+                            else:
+                                st.write(f"Экономия: {savings}")
+                        else:
+                            st.write(f"Экономия: {savings}")
 
-            # Таблица сравнения
-            st.subheader("📊 Детальное сравнение")
-            if 'comparison_table' in comparison:
-                st.json(comparison['comparison_table'])
+                # Таблица сравнения
+                st.subheader("📊 Детальное сравнение")
+                if 'comparison_table' in comparison:
+                    st.json(comparison['comparison_table'])
 
-            # Рекомендации
-            if 'recommendations' in comparison:
-                st.subheader("📋 Рекомендации")
-                for rec in comparison['recommendations']:
-                    st.info(rec)
+                # Рекомендации
+                if 'recommendations' in comparison:
+                    st.subheader("📋 Рекомендации")
+                    for rec in comparison['recommendations']:
+                        st.info(rec)
 
-            # Риски
-            if 'risks' in comparison:
-                st.subheader("⚠️ Риски")
-                risks = comparison['risks']
-                if isinstance(risks, list):
-                    for risk in risks:
-                        st.warning(risk)
-                else:
-                    st.json(risks)
+                # Риски
+                if 'risks' in comparison:
+                    st.subheader("⚠️ Риски")
+                    risks = comparison['risks']
+                    if isinstance(risks, list):
+                        for risk in risks:
+                            st.warning(risk)
+                    else:
+                        st.json(risks)
 
-            # Моменты для переговоров
-            if 'negotiation_points' in comparison:
-                st.subheader("💬 Моменты для переговоров")
-                points = comparison['negotiation_points']
-                if isinstance(points, list):
-                    for point in points:
-                        st.write(f"• {point}")
-                else:
-                    st.write(points)
+                # Моменты для переговоров
+                if 'negotiation_points' in comparison:
+                    st.subheader("💬 Моменты для переговоров")
+                    points = comparison['negotiation_points']
+                    if isinstance(points, list):
+                        for point in points:
+                            st.write(f"• {point}")
+                    else:
+                        st.write(points)
 
 
 def show_response_tab():
@@ -755,9 +806,9 @@ def show_search_tab():
 
     if os.path.exists(meta_path) and os.path.exists(index_path):
         if Config.USE_GPU and torch.cuda.is_available():
-            searcher = AcceleratedVectorSearch()
+            searcher = AcceleratedVectorSearch(logger=st.session_state.benchmark_logger)
         else:
-            searcher = VectorSearch()
+            searcher = VectorSearch(logger=st.session_state.benchmark_logger)
         searcher.load(Config.VECTOR_DB_PATH)
 
         query = st.text_input("Поисковый запрос", placeholder="Например: ноутбуки с доставкой по Москве")

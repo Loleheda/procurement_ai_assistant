@@ -1,6 +1,6 @@
 import re
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # Для GigaChat API
 from gigachat import GigaChat
@@ -10,6 +10,7 @@ import certifi
 # Для веб-интерфейса
 import streamlit as st
 
+from BenchmarkLogger import BenchmarkLogger
 from Config import Config
 
 
@@ -17,7 +18,8 @@ class GigaChatClient:
     """Клиент для работы с GigaChat API"""
 
     def __init__(self, credentials: str, scope: str = "GIGACHAT_API_PERS",
-                 model: str = "GigaChat", verify_ssl: bool = False):
+                 model: str = "GigaChat", verify_ssl: bool = False,
+                 logger: Optional[BenchmarkLogger] = None):
         """
         Инициализация клиента GigaChat
 
@@ -32,6 +34,7 @@ class GigaChatClient:
         self.model = model
         self.verify_ssl = verify_ssl
         self.client = None
+        self.logger = logger
         self._init_client()
 
     def _init_client(self):
@@ -47,21 +50,20 @@ class GigaChatClient:
                 scope=self.scope,
                 model=self.model,
                 verify_ssl_certs=self.verify_ssl,
-                timeout=Config.GIGACHAT_TIMEOUT
+                timeout=Config.GIGACHAT_TIMEOUT,
+                logger=self.logger
             )
         except Exception as e:
             st.error(f"❌ Ошибка инициализации GigaChat: {e}")
             raise
 
-    def chat(self, messages: List[Dict], temperature: float = 0.1,
-             functions: List[Dict] = None) -> Dict:
+    def chat(self, messages: List[Dict], temperature: float = 0.1) -> Dict:
         """
         Отправка запроса к GigaChat
 
         Args:
             messages: Список сообщений [{"role": "user", "content": "текст"}]
             temperature: Температура генерации (0-1)
-            functions: Описания функций для function calling
 
         Returns:
             Ответ от модели
