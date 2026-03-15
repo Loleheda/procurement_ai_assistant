@@ -7,6 +7,9 @@ from gigachat import GigaChat
 import ssl
 import certifi
 
+# Для веб-интерфейса
+import streamlit as st
+
 from Config import Config
 
 
@@ -47,7 +50,7 @@ class GigaChatClient:
                 timeout=Config.GIGACHAT_TIMEOUT
             )
         except Exception as e:
-            # st.error(f"❌ Ошибка инициализации GigaChat: {e}")
+            st.error(f"❌ Ошибка инициализации GigaChat: {e}")
             raise
 
     def chat(self, messages: List[Dict], temperature: float = 0.1,
@@ -91,7 +94,7 @@ class GigaChatClient:
             return result
 
         except Exception as e:
-            # st.error(f"Ошибка при запросе к GigaChat: {e}")
+            st.error(f"Ошибка при запросе к GigaChat: {e}")
             return {
                 "choices": [
                     {
@@ -158,7 +161,7 @@ class GigaChatClient:
             return json.loads(content)
 
         except json.JSONDecodeError as e:
-            # st.error(f"Ошибка парсинга JSON: {e}")
+            st.error(f"Ошибка парсинга JSON: {e}")
             return {
                 "supplier_name": "Ошибка распознавания",
                 "products": [],
@@ -166,7 +169,7 @@ class GigaChatClient:
                 "error": f"JSON parse error: {e}"
             }
         except Exception as e:
-            # st.error(f"Ошибка извлечения данных: {e}")
+            st.error(f"Ошибка извлечения данных: {e}")
             return {
                 "supplier_name": "Ошибка",
                 "products": [],
@@ -231,7 +234,7 @@ class GigaChatClient:
             return json.loads(content)
 
         except Exception as e:
-            # st.error(f"Ошибка при сравнении: {e}")
+            st.error(f"Ошибка при сравнении: {e}")
             return {"error": str(e)}
 
     def generate_response(self, offer: Dict, negotiation_points: List[str]) -> str:
